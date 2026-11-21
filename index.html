@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>OS Disk Scheduling Visualizer</title>
+<style>
+* {
+    box-sizing: border-box;
+}
+body {
+    font-family: Arial, sans-serif;
+    background: #eef2f7;
+    margin: 0;
+    padding: 20px;
+    color: #222;
+}
+.container {
+    max-width: 1100px;
+    margin: auto;
+}
+h1 {
+    text-align: center;
+    color: #183153;
+}
+.card {
+    background: white;
+    padding: 20px;
+    margin: 20px 0;
+    border-radius: 12px;
+    box-shadow: 0 3px 10px #ccc;
+}
+.inputs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit,minmax(180px,1fr));
+    gap: 15px;
+}
+label {
+    display: block;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+input, select, button {
+    width: 100%;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #ccc;
+}
+button {
+    background: #183153;
+    color: white;
+    border: none;
+    cursor: pointer;
+    margin-top: 10px;
+}
+button:hover {
+    background: #315b94;
+}
+.controls {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.controls button {
+    flex: 1;
+    min-width: 100px;
+}
+#result {
+    font-weight: bold;
+    margin-top: 15px;
+}
+canvas {
+    width: 100%;
+    height: 300px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+}
+.chart {
+    margin-top: 20px;
+}
+.sequence {
+    word-break: break-word;
+    line-height: 2;
+}
+.bar {
+    margin: 12px 0;
+}
+.bar span {
+    display: block;
+    background: #3974c5;
+    color: white;
+    padding: 8px;
+    border-radius: 5px;
+    min-width: 60px;
+}
+@media(max-width:600px) {
+    body {
+        padding: 10px;
+    }
+}
+</style>
+</head>
+<body>
+
+<div class="container">
+<h1>OS Disk Scheduling Visualizer</h1>
+
+<div class="card">
+<h2>Input Details</h2>
+
+<div class="inputs">
+<div>
+<label>Disk Size (Cylinders)</label>
+<input type="number" id="diskSize" value="200" min="2">
+</div>
+
+<div>
+<label>Initial Head Position</label>
+<input type="number" id="head" value="50">
+</div>
+
+<div>
+<label>Request Queue</label>
+<input type="text" id="queue" value="82,170,43,140,24,16,190">
+</div>
+
+<div>
+<label>Direction</label>
+<select id="direction">
+<option value="right">Right (Higher)</option>
+<option value="left">Left (Lower)</option>
+</select>
+</div>
+</div>
+
+<button onclick="runVisualizer()">Run All Algorithms</button>
+<p id="result"></p>
+</div>
+
+<div class="card">
+<h2>Algorithm Visualization</h2>
+
+<label>Select Algorithm</label>
+<select id="algorithm" onchange="showAlgorithm()">
+<option value="FCFS">FCFS</option>
+<option value="SSTF">SSTF</option>
+<option value="SCAN">SCAN</option>
+<option value="CSCAN">C-SCAN</option>
+<option value="LOOK">LOOK</option>
+</select>
+
+<div class="controls">
+<button onclick="previousStep()">Previous</button>
+<button onclick="nextStep()">Next</button>
+<button onclick="playAnimation()">Auto Play</button>
+<button onclick="stopAnimation()">Stop</button>
+</div>
+
+<p id="stepInfo"></p>
+<p class="sequence" id="sequence"></p>
+
+<canvas id="seekCanvas" width="1000" height="300"></canvas>
+
+<p id="movement"></p>
+</div>
+
+<div class="card">
+<h2>Comparison of Total Head Movement</h2>
+<div id="comparison"></div>
+</div>
+</div>
+
+<script>
+let results = {};
+let currentPath = [];
+let currentStep = 0;
+let timer = null;
+
+function getInput() {
+    let size = parseInt(document.getElementById("diskSize").value);
+    let head = parseInt(document.getElementById("head").value);
+    let queue = document.getElementById("queue").value
+        .split(",")
+        .map(x => parseInt(x.trim()));
+    let direction = document.getElementById("direction").value;
+
+    if (!Number.isInteger(size) || size < 2) {
+        alert("Disk size must be at least 2.");
+        return null;
+    }
+
+    if (!Number.isInteger(head) || head < 0 || head >= size) {
+        alert("Head position must be between 0 and " + (size - 1));
+        return null;
+    }
+
+    if (queue.length === 0 || queue.some(x => isNaN(x))) {
+        alert("Enter a valid request queue.");
+        return null;
+    }
+
+    if (queue.some(x => x < 0 || x >= size)) {
+        alert("Requests must be between 0 and " + (size - 1));
+        return null;
+    }
+
+    return { size, head, queue, direction };
+}
+
+function calculate(name, head, queue, size, direction) {
+    let q = [...queue];
+    let path = [head];
+
+    if (name === "FCFS") {
+        path = path.concat(q);
+    }
+
+    else if (name === "SSTF") {
+        while (q.length) {
+            let index = 0;
+            for (let i = 1; i < q.length; i++) {
+                if (Math.abs(head - q[i]) < Math.abs(head - q[index])) {
+                    index = i;
+                }
+            }
+            head = q.splice(index, 1)[0];
+            path.push(head);
+        }
+    }
+
+    else if (name === "SCAN" || name === "CSCAN" || name === "LOOK") {
+        let left = q.filter(x => x < head).sort((a,b) => b-a);
+        let right = q.filter(x => x >= head).sort((a,b) => a-b);
+
+        if (direction === "right") {
+            if (name === "LOOK") {
+                path = path.concat(right, left);
+            }
+            else if (name === "SCAN") {
+                path = path.concat(right, size-1, left);
+            }
+            else {
+                path = path.concat(right, size-1, 0, left);
+            }
+        }
+        else {
+            if (name === "LOOK") {
+                path = path.concat(left, right);
+            }
+            else if (name === "SCAN") {
+                path = path.concat(left, 0, right);
+            }
+            else {
+                path = path.concat(left, 0, size-1, right);
+            }
+        }
+
+        path = path.filter((x,i) => i === 0 || x !== path[i-1]);
+    }
+
+    let movement = 0;
+    for (let i = 1; i < path.length; i++) {
+        movement += Math.abs(path[i] - path[i-1]);
+    }
+
+    return { path, movement };
+}
+
+function runVisualizer() {
+    let data = getInput();
+    if (!data) return;
+
+    results = {};
+
+    let algorithms = ["FCFS","SSTF","SCAN","CSCAN","LOOK"];
+
+    for (let name of algorithms) {
+        results[name] = calculate(
+            name, data.head, data.queue, data.size, data.direction
+        );
+    }
+
+    document.getElementById("result").innerHTML =
+        "All algorithms calculated successfully!";
+
+    showComparison();
+    showAlgorithm();
+}
+
+function showComparison() {
+    let html = "";
+
+    for (let name in results) {
+        let movement = results[name].movement;
+        html += `
+        <div class="bar">
+            <b>${name} : ${movement} cylinders</b>
+            <span style="width:${Math.max(5,movement/Math.max(...Object.values(results).map(x=>x.movement))*100)}%">
+            ${movement}
+            </span>
+        </div>`;
+    }
+
+    document.getElementById("comparison").innerHTML = html;
+}
+
+function showAlgorithm() {
+    let name = document.getElementById("algorithm").value;
+
+    if (!results[name]) return;
+
+    currentPath = results[name].path;
+    currentStep = currentPath.length - 1;
+
+    drawGraph();
+    updateInfo();
+}
+
+function updateInfo() {
+    let visiblePath = currentPath.slice(0, currentStep + 1);
+
+    document.getElementById("stepInfo").innerText =
+        "Step " + currentStep + " of " + (currentPath.length - 1);
+
+    document.getElementById("sequence").innerHTML =
+        "<b>Service Sequence:</b> " + visiblePath.join(" → ");
+
+    let movement = 0;
+
+    for (let i = 1; i < visiblePath.length; i++) {
+        movement += Math.abs(visiblePath[i] - visiblePath[i-1]);
+    }
+
+    document.getElementById("movement").innerHTML =
+        "<b>Head Movement so far:</b> " + movement + " cylinders";
+
+    drawGraph();
+}
+
+function drawGraph() {
+    let canvas = document.getElementById("seekCanvas");
+    let ctx = canvas.getContext("2d");
+
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+
+    let data = getInput();
+    if (!data) return;
+
+    let path = currentPath.slice(0,currentStep+1);
+    if (path.length === 0) return;
+
+    let padding = 50;
+    let max = data.size-1;
+
+    function x(i) {
+        return padding + i*(canvas.width-2*padding)/Math.max(1,path.length-1);
+    }
+
+    function y(value) {
+        return canvas.height-padding-
+            (value/max)*(canvas.height-2*padding);
+    }
+
+    ctx.strokeStyle = "#bbb";
+    ctx.beginPath();
+    ctx.moveTo(padding,padding);
+    ctx.lineTo(padding,canvas.height-padding);
+    ctx.lineTo(canvas.width-padding,canvas.height-padding);
+    ctx.stroke();
+
+    ctx.fillStyle = "#555";
+    ctx.font = "12px Arial";
+    ctx.fillText("Cylinder 0",5,canvas.height-padding);
+    ctx.fillText("Cylinder "+max,5,padding);
+
+    ctx.strokeStyle = "#3974c5";
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+
+    for (let i=0;i<path.length;i++) {
+        if(i===0) ctx.moveTo(x(i),y(path[i]));
+        else ctx.lineTo(x(i),y(path[i]));
+    }
+    ctx.stroke();
+
+    for(let i=0;i<path.length;i++) {
+        ctx.fillStyle = "#e04f5f";
+        ctx.beginPath();
+        ctx.arc(x(i),y(path[i]),5,0,Math.PI*2);
+        ctx.fill();
+
+        ctx.fillStyle = "#222";
+        ctx.font = "12px Arial";
+        ctx.fillText(path[i],x(i)+5,y(path[i])-10);
+    }
+}
+
+function nextStep() {
+    if (currentStep < currentPath.length-1) {
+        currentStep++;
+        updateInfo();
+    }
+}
+
+function previousStep() {
+    if (currentStep > 0) {
+        currentStep--;
+        updateInfo();
+    }
+}
+
+function playAnimation() {
+    stopAnimation();
+
+    if (currentStep >= currentPath.length-1) {
+        currentStep = 0;
+        updateInfo();
+    }
+
+    timer = setInterval(() => {
+        if (currentStep < currentPath.length-1) {
+            currentStep++;
+            updateInfo();
+        } else {
+            stopAnimation();
+        }
+    },700);
+}
+
+function stopAnimation() {
+    clearInterval(timer);
+}
+</script>
+</body>
+</html>
